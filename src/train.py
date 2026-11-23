@@ -37,6 +37,7 @@ def get_batch(data, batch_size, block_size, device):
     return x.to(device), y.to(device)
 
 
+
 @torch.no_grad()
 def estimate_loss(
     model,
@@ -45,7 +46,7 @@ def estimate_loss(
     batch_size,
     block_size,
     device,
-    eval_batches=10,
+    eval_batches=20,
 ):
     model.eval()
     results = {}
@@ -54,15 +55,29 @@ def estimate_loss(
         ("train", train_data),
         ("val", val_data),
     ]:
+        # Independent random generator for evaluation
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(
+            2027 if split == "val" else 2028
+        )
+
         losses = []
 
         for _ in range(eval_batches):
-            x, y = get_batch(
-                data,
-                batch_size,
-                block_size,
-                device,
+            positions = torch.randint(
+                0,
+                len(data) - block_size,
+                (batch_size,),
+                generator=generator,
             )
+
+            offsets = torch.arange(block_size)
+
+            x = data[positions[:, None] + offsets]
+            y = data[positions[:, None] + offsets + 1]
+
+            x = x.to(device)
+            y = y.to(device)
 
             _, loss = model(x, y)
             losses.append(loss.item())
@@ -71,7 +86,6 @@ def estimate_loss(
 
     model.train()
     return results
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -88,6 +102,11 @@ def main():
         config = json.load(f)
 
     set_seed(config["seed"])
+
+    # Request deterministic operations where supported
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training device: {device}")
@@ -129,6 +148,9 @@ def main():
 
     history = []
     best_val_loss = float("inf")
+
+    if device == "cuda":
+        torch.cuda.synchronize()
 
     start_time = time.perf_counter()
 
@@ -206,6 +228,14 @@ def main():
 
     with open(output_dir / "history.json", "w") as f:
         json.dump(history, f, indent=2)
+        
+    if device == "cuda":
+        torch.cuda.synchronize()
+
+    total_seconds = time.perf_counter() - start_time
+
+    print(f"Total experiment time: {total_seconds:.2f} seconds")
+    print(f"Average time per step: {total_seconds / args.max_steps:.4f} seconds")
 
     print("\nTraining completed!")
     print(f"Best validation loss: {best_val_loss:.4f}")
