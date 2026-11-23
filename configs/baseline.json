@@ -1,0 +1,14 @@
+{
+  "model": "MiniGPT",
+  "dataset": "roneneldan/TinyStories",
+  "tokenizer": "byte-level",
+  "vocab_size": 257,
+  "block_size": 128,
+  "n_embd": 128,
+  "n_head": 4,
+  "n_layer": 4,
+  "dropout": 0.1,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "seed": 42
+}
