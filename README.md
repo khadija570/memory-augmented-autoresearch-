@@ -1,2 +1,2 @@
 # memory-augmented-autoresearch-
-Autonomous LLM research agents with structured experimental memory for efficient small language model optimization.
+Can structured experimental memory improve the efficiency of autonomous LLM research agents under fixed computational budgets?
