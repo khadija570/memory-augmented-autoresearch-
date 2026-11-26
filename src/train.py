@@ -136,9 +136,13 @@ def main():
     ).to(device)
 
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config["learning_rate"],
+    model.parameters(),
+    lr=config["learning_rate"],
+    weight_decay=config.get("weight_decay", 0.01),
     )
+    print("Optimizer configuration:")
+    print("Learning rate:", optimizer.param_groups[0]["lr"])
+    print("Weight decay:", optimizer.param_groups[0]["weight_decay"])
 
     batch_size = config["batch_size"]
     block_size = config["block_size"]
