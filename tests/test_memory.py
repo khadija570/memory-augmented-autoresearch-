@@ -4,7 +4,7 @@ from pathlib import Path
 
 from src.memory.episodic import EpisodicMemory
 from src.memory.semantic import SemanticMemory
-
+from src.memory.failure import FailureMemory
 def test_episodic_memory():
 
     with tempfile.TemporaryDirectory() as directory:
@@ -254,8 +254,165 @@ def test_semantic_memory():
 
     print("ALL SEMANTIC MEMORY TESTS PASSED")
 
+def test_failure_memory():
+
+    memory = FailureMemory()
+
+    # Test 1: Scientific failure
+    exp_5 = {
+        "experiment_id": 5,
+        "status": "success",
+        "parameters": {
+            "learning_rate": 0.0012,
+            "dropout": 0.0,
+            "weight_decay": 0.01
+        },
+        "best_val_loss": 2.004559648036957,
+        "valid": True
+    }
+
+    failure = memory.add_experiment(
+        exp_5,
+        reference_loss=1.9038520574569702
+    )
+
+    assert failure["failure_type"] == "scientific_failure"
+    assert failure["scientific_evidence"] is True
+
+    print("PASS: Scientific failure classification")
+
+    # Test 2: No improvement
+    exp_equal = {
+        **exp_5,
+        "experiment_id": 8,
+        "best_val_loss": 1.9038520574569702
+    }
+
+    failure = memory.add_experiment(
+        exp_equal,
+        reference_loss=1.9038520574569702
+    )
+
+    assert failure["failure_type"] == "no_improvement"
+
+    print("PASS: No-improvement classification")
+
+    # Test 3: Successful improvement
+    exp_7 = {
+        "experiment_id": 7,
+        "status": "success",
+        "parameters": {
+            "learning_rate": 0.0007,
+            "dropout": 0.0,
+            "weight_decay": 0.01
+        },
+        "best_val_loss": 1.894414496421814,
+        "valid": True
+    }
+
+    failure = memory.add_experiment(
+        exp_7,
+        reference_loss=1.8996867656707763
+    )
+
+    assert failure is None
+
+    print("PASS: Successful improvement excluded")
+
+    # Test 4: Invalid experimental evidence
+    exp_4 = {
+        "experiment_id": 4,
+        "status": "success",
+        "parameters": {
+            "learning_rate": 0.001,
+            "dropout": 0.0,
+            "weight_decay": 0.0
+        },
+        "best_val_loss": 1.9038520574569702,
+        "valid": False,
+        "invalid_reason": (
+            "Weight decay was ignored by AdamW"
+        )
+    }
+
+    failure = memory.add_experiment(exp_4)
+
+    assert failure["failure_type"] == "invalid_experiment"
+    assert failure["scientific_evidence"] is False
+
+    print("PASS: Invalid experiment classification")
+
+    # Test 5: Operational training failure
+    failed_experiment = {
+        "experiment_id": 9,
+        "status": "failed",
+        "parameters": {},
+        "error": "Training timeout"
+    }
+
+    failure = memory.add_experiment(
+        failed_experiment
+    )
+
+    assert failure["failure_type"] == "operational_failure"
+    assert failure["scientific_evidence"] is False
+
+    print("PASS: Operational failure classification")
+
+    # Test 6: Gemini API failure
+    failure = memory.add_proposal_failure(
+        reason="503 UNAVAILABLE",
+        attempt=1,
+        operational=True
+    )
+
+    assert failure["failure_type"] == "operational_failure"
+    assert failure["scientific_evidence"] is False
+
+    print("PASS: API failure classification")
+
+    # Test 7: Invalid proposal
+    failure = memory.add_proposal_failure(
+        reason="Learning rate outside search space",
+        parameters={"learning_rate": 10},
+        attempt=2
+    )
+
+    assert failure["failure_type"] == "proposal_failure"
+
+    print("PASS: Proposal failure classification")
+
+    # Test 8: Scientific evidence retrieval
+    scientific = memory.get_scientific_failures()
+
+    assert len(scientific) == 2
+
+    print("PASS: Scientific evidence retrieval")
+
+    # Test 9: Failure summary
+    summary = memory.get_summary()
+
+    assert summary["scientific_failure"] == 1
+    assert summary["no_improvement"] == 1
+    assert summary["invalid_experiment"] == 1
+    assert summary["operational_failure"] == 2
+    assert summary["proposal_failure"] == 1
+
+    assert len(memory) == 6
+
+    print("PASS: Failure summary")
+
+    print("\nFAILURE MEMORY SUMMARY:")
+
+    for category, count in summary.items():
+
+        print(f"{category}: {count}")
+
+    print("\nALL FAILURE MEMORY TESTS PASSED")
+
 
 if __name__ == "__main__":
 
     test_episodic_memory()
     test_semantic_memory()
+    test_failure_memory()
