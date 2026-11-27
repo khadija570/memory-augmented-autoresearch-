@@ -6,6 +6,7 @@ from src.memory.episodic import EpisodicMemory
 from src.memory.semantic import SemanticMemory
 from src.memory.failure import FailureMemory
 from src.memory.retrieval import MemoryRetriever
+from src.memory.manager import MemoryManager
 def test_episodic_memory():
 
     with tempfile.TemporaryDirectory() as directory:
@@ -628,10 +629,245 @@ def test_memory_retrieval():
     print("\nALL MEMORY RETRIEVAL TESTS PASSED")
 
 
+def test_memory_manager():
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as directory:
+
+        manager = MemoryManager(
+            protocol_id="test_protocol_v1",
+            memory_dir=directory
+        )
+
+        # Test 1: Empty memory
+        assert manager.get_best_experiment() is None
+
+        print("PASS: Empty memory initialization")
+
+        # Baseline experiment
+        baseline = {
+            "experiment_id": 0,
+            "status": "success",
+            "parameters": {
+                "learning_rate": 0.001,
+                "dropout": 0.1,
+                "weight_decay": 0.01
+            },
+            "best_val_loss": 2.002828
+        }
+
+        stored = manager.record_experiment(
+            baseline
+        )
+
+        # Test 2: Baseline registration
+        assert stored["decision"] == "KEEP"
+        assert manager.get_best_loss() == 2.002828
+
+        print("PASS: Baseline registration")
+
+        # Improved experiment
+        exp_3 = {
+            "experiment_id": 3,
+            "status": "success",
+            "parameters": {
+                "learning_rate": 0.001,
+                "dropout": 0.0,
+                "weight_decay": 0.01
+            },
+            "best_val_loss": 1.903852
+        }
+
+        stored = manager.record_experiment(exp_3)
+
+        # Test 3: Automatic KEEP decision
+        assert stored["decision"] == "KEEP"
+        assert stored["improvement_pct"] > 0
+        assert manager.get_best_loss() == 1.903852
+
+        print("PASS: Automatic KEEP decision")
+
+        # Test 4: Automatic semantic update
+        assert len(manager.semantic) == 1
+
+        print("PASS: Automatic semantic update")
+
+        # Worse experiment
+        exp_5 = {
+            "experiment_id": 5,
+            "status": "success",
+            "parameters": {
+                "learning_rate": 0.0012,
+                "dropout": 0.0,
+                "weight_decay": 0.01
+            },
+            "best_val_loss": 2.004560
+        }
+
+        stored = manager.record_experiment(exp_5)
+
+        # Test 5: Automatic DISCARD decision
+        assert stored["decision"] == "DISCARD"
+        assert stored["improvement_pct"] < 0
+
+        assert manager.get_best_loss() == 1.903852
+
+        print("PASS: Automatic DISCARD decision")
+
+        # Test 6: Automatic failure update
+        scientific_failures = (
+            manager.failure.get_scientific_failures()
+        )
+
+        assert len(scientific_failures) == 1
+
+        assert (
+            scientific_failures[0]["experiment_id"]
+            == 5
+        )
+
+        print("PASS: Automatic failure update")
+
+        # Test 7: Duplicate detection
+        assert manager.has_tested(
+            exp_3["parameters"]
+        )
+
+        assert not manager.has_tested({
+            "learning_rate": 0.0006,
+            "dropout": 0.0,
+            "weight_decay": 0.01
+        })
+
+        print("PASS: Duplicate configuration detection")
+
+        # Test 8: Operational failure
+        manager.record_proposal_failure(
+            reason="503 UNAVAILABLE",
+            attempt=1,
+            operational=True
+        )
+
+        assert (
+            manager.failure.get_summary()[
+                "operational_failure"
+            ] == 1
+        )
+
+        print("PASS: Operational failure registration")
+
+        # Best experiment
+        exp_7 = {
+            "experiment_id": 7,
+            "status": "success",
+            "parameters": {
+                "learning_rate": 0.0007,
+                "dropout": 0.0,
+                "weight_decay": 0.01
+            },
+            "best_val_loss": 1.894414
+        }
+
+        manager.record_experiment(exp_7)
+
+        # Test 9: Structured context generation
+        context = manager.get_context()
+
+        assert (
+            context["research_state"][
+                "best_experiment_id"
+            ] == 7
+        )
+
+        assert len(context["semantic_findings"]) > 0
+
+        print("PASS: Structured context generation")
+
+        # Test 10: Incompatible protocol rejection
+        try:
+
+            manager.record_experiment({
+                **exp_7,
+                "experiment_id": 99,
+                "protocol_id": "different_protocol"
+            })
+
+        except ValueError:
+
+            print("PASS: Incompatible protocol rejected")
+
+        else:
+
+            raise AssertionError(
+                "Incompatible protocol was accepted"
+            )
+
+        # Test 11: Memory restoration
+        restored = MemoryManager(
+            protocol_id="test_protocol_v1",
+            memory_dir=directory
+        )
+
+        assert len(restored.episodic) == 4
+
+        assert (
+            restored.get_best_loss()
+            == 1.894414
+        )
+
+        assert (
+            restored.semantic.get_all()
+            == manager.semantic.get_all()
+        )
+
+        assert (
+            restored.failure.get_scientific_failures()
+            == manager.failure.get_scientific_failures()
+        )
+
+        print("PASS: Memory restoration")
+
+        # Test 12: Evidence invalidation
+        restored.invalidate_experiment(
+            experiment_id=7,
+            reason="Synthetic invalidation test"
+        )
+
+        assert restored.get_best_loss() == 1.903852
+
+        assert not restored.has_tested(
+            exp_7["parameters"]
+        )
+
+        assert all(
+            7 not in finding["supporting_experiments"]
+            for finding in restored.semantic.get_all()
+        )
+
+        print("PASS: Evidence invalidation and reconstruction")
+
+        # Test 13: Memory summary
+        summary = restored.get_summary()
+
+        assert summary["total_experiments"] == 4
+        assert summary["valid_experiments"] == 3
+
+        print("PASS: Memory summary")
+
+        import json
+
+        print("\nMEMORY MANAGER SUMMARY:")
+
+        print(json.dumps(summary, indent=4))
+
+        print("\nALL MEMORY MANAGER TESTS PASSED")
+
 if __name__ == "__main__":
 
     test_episodic_memory()
     test_semantic_memory()
     test_failure_memory()
     test_memory_retrieval()
+    test_memory_manager()
     
