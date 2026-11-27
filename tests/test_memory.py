@@ -5,6 +5,7 @@ from pathlib import Path
 from src.memory.episodic import EpisodicMemory
 from src.memory.semantic import SemanticMemory
 from src.memory.failure import FailureMemory
+from src.memory.retrieval import MemoryRetriever
 def test_episodic_memory():
 
     with tempfile.TemporaryDirectory() as directory:
@@ -411,8 +412,226 @@ def test_failure_memory():
     print("\nALL FAILURE MEMORY TESTS PASSED")
 
 
+def test_memory_retrieval():
+
+    episodic = EpisodicMemory()
+    semantic = SemanticMemory()
+    failure = FailureMemory()
+
+    protocol_id = "test_protocol_v1"
+
+    def make_experiment(
+        experiment_id,
+        lr,
+        dropout,
+        wd,
+        loss,
+        valid=True,
+        protocol=protocol_id
+    ):
+
+        return {
+            "experiment_id": experiment_id,
+            "status": "success",
+            "parameters": {
+                "learning_rate": lr,
+                "dropout": dropout,
+                "weight_decay": wd
+            },
+            "best_val_loss": loss,
+            "valid": valid,
+            "protocol_id": protocol
+        }
+
+    experiments = [
+
+        make_experiment(
+            0, 0.001, 0.1, 0.01, 2.002828
+        ),
+
+        make_experiment(
+            3, 0.001, 0.0, 0.01, 1.903852
+        ),
+
+        make_experiment(
+            4, 0.001, 0.0, 0.0, 1.903852,
+            valid=False
+        ),
+
+        make_experiment(
+            5, 0.0012, 0.0, 0.01, 2.004560
+        ),
+
+        make_experiment(
+            6, 0.0008, 0.0, 0.01, 1.899687
+        ),
+
+        make_experiment(
+            7, 0.0007, 0.0, 0.01, 1.894414
+        ),
+
+        # Incompatible synthetic experiment
+        make_experiment(
+            99, 0.001, 0.0, 0.01, 0.5,
+            protocol="different_protocol"
+        )
+    ]
+
+    for experiment in experiments:
+
+        episodic.add_experiment(experiment)
+
+    failure.add_experiment(
+        experiments[3],
+        reference_loss=1.903852
+    )
+
+    failure.add_experiment(
+        experiments[2]
+    )
+
+    failure.add_proposal_failure(
+        reason="503 UNAVAILABLE",
+        operational=True
+    )
+
+    retriever = MemoryRetriever(
+        top_k_best=3,
+        top_k_recent=3,
+        top_k_findings=5,
+        top_k_failures=3
+    )
+
+    # Test 1: Contextual relevance
+    score = retriever.relevance_score(
+        {
+            "dropout": 0.0,
+            "weight_decay": 0.01
+        },
+        {
+            "learning_rate": 0.0007,
+            "dropout": 0.0,
+            "weight_decay": 0.01
+        }
+    )
+
+    assert score == 1.0
+
+    print("PASS: Contextual relevance")
+
+    context = retriever.retrieve(
+        episodic,
+        semantic,
+        failure,
+        protocol_id
+    )
+
+    # Test 2: Best research state
+    assert (
+        context["research_state"]["best_experiment_id"]
+        == 7
+    )
+
+    print("PASS: Best research state")
+
+    # Test 3: Best experiment retrieval
+    best_ids = [
+        experiment["experiment_id"]
+        for experiment in context["best_experiments"]
+    ]
+
+    assert best_ids == [7, 6, 3]
+
+    print("PASS: Best experiment retrieval")
+
+    # Test 4: Recent experiment retrieval
+    recent_ids = [
+        experiment["experiment_id"]
+        for experiment in context["recent_experiments"]
+    ]
+
+    assert recent_ids == [0, 5]
+
+    print("PASS: Recent experiment retrieval")
+
+    # Test 5: No duplicate episodes
+    assert not set(best_ids).intersection(recent_ids)
+
+    print("PASS: Duplicate episodes excluded")
+
+    # Test 6: Invalid and incompatible evidence
+    all_ids = best_ids + recent_ids
+
+    assert 4 not in all_ids
+    assert 99 not in all_ids
+
+    print("PASS: Invalid and incompatible evidence excluded")
+
+    # Test 7: Semantic retrieval
+    findings = context["semantic_findings"]
+
+    assert 0 < len(findings) <= 5
+
+    assert all(
+        finding["protocol_id"] == protocol_id
+        for finding in findings
+    )
+
+    assert all(
+        4 not in finding["supporting_experiments"]
+        for finding in findings
+    )
+
+    print("PASS: Semantic retrieval")
+
+    # Test 8: Relevance ranking
+    scores = [
+        finding["relevance_score"]
+        for finding in findings
+    ]
+
+    assert scores == sorted(scores, reverse=True)
+
+    print("PASS: Relevance ranking")
+
+    # Test 9: Scientific failure retrieval
+    failures = context["scientific_failures"]
+
+    assert len(failures) == 1
+    assert failures[0]["experiment_id"] == 5
+
+    print("PASS: Scientific failure retrieval")
+
+    # Test 10: Empty memory
+    empty_context = retriever.retrieve(
+        EpisodicMemory(),
+        SemanticMemory(),
+        FailureMemory(),
+        protocol_id
+    )
+
+    assert (
+        empty_context["research_state"]["best_val_loss"]
+        is None
+    )
+
+    assert empty_context["best_experiments"] == []
+
+    print("PASS: Empty memory handling")
+
+    print("\nRETRIEVED RESEARCH CONTEXT:")
+
+    import json
+
+    print(json.dumps(context, indent=4))
+
+    print("\nALL MEMORY RETRIEVAL TESTS PASSED")
+
+
 if __name__ == "__main__":
 
     test_episodic_memory()
     test_semantic_memory()
     test_failure_memory()
+    test_memory_retrieval()
+    
